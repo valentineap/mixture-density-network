@@ -198,8 +198,8 @@ contains
     end if
 
     !print *, E
-    do iminibatch=1,10
-          task = 'START'
+    !do iminibatch=1,10
+    task = 'START'
     do j=1,size(inputs,2)
       do i=1,size(inputs,1)
         noise(i,j)=noise_std*rnor()
@@ -224,7 +224,7 @@ contains
         end if
       end if
     end do
-  end do
+    !end do
   end subroutine train_mdn
 
   subroutine evaluate_initial_biases(nkern,neg,targets,biases)
