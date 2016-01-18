@@ -1,7 +1,7 @@
 OBJ=../obj
 BIN=../bin
 
-FLAGS=-Ofast -J ../mod
+FLAGS=-O3 -J ../mod
 FC=gfortran -c $(FLAGS)
 FLINK=gfortran $(FLAGS)
 
