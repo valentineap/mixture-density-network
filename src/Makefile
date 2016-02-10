@@ -1,7 +1,7 @@
 OBJ=../obj
 BIN=../bin
 
-FLAGS=-O3 -J ../mod
+FLAGS=-O3 -J ../mod -Wuninitialized -fbounds-check -g
 FC=gfortran -c $(FLAGS)
 FLINK=gfortran $(FLAGS)
 
@@ -28,6 +28,6 @@ $(OBJ)/timer.o: Lbfgsb.3.0/timer.f
 $(OBJ)/blas.o: Lbfgsb.3.0/blas.f
 	$(FC) $+ -o $@
 
-$(BIN)/mdn_test: $(OBJ)/ziggurat.o $(OBJ)/kmeans.o $(OBJ)/blas.o $(OBJ)/linpack.o \
+$(BIN)/mdn_test: $(OBJ)/ziggurat.o $(OBJ)/kmeans.o $(OBJ)/linpack.o \
 										$(OBJ)/timer.o $(OBJ)/lbgfsb.o $(OBJ)/mlp.o $(OBJ)/mdn.o $(OBJ)/mdn_test.o
-	$(FLINK) $+ -o $@
+	$(FLINK) $+ -o $@ -lblas

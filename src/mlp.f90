@@ -71,7 +71,7 @@ contains
         mlp%params(i) = rnor()/real(mlp%node_counts(ilayer)+1)
       end do
       do i = mlp%ib(1,ilayer),mlp%ib(2,ilayer)
-        mlp%params(i)=0.0_k_rd
+        mlp%params(i)=rnor()/real(mlp%node_counts(ilayer)+1)
       end do
     end do
     if(present(final_bias)) mlp%params(mlp%ib(1,mlp%nlayers):mlp%ib(2,mlp%nlayers)) = final_bias

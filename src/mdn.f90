@@ -2,6 +2,13 @@ module mdn
   use mlp
   implicit none
 
+  type mdn_committee
+    integer::nmembers
+    integer,dimension(:),allocatable::nkernels
+    type(mlp_network),dimension(:),allocatable::member
+    real(k_rd),dimension(:),allocatable::weight
+  end type
+
 contains
   subroutine evaluate_gmm(nx,x,p,nkernels,weights,means,stds)
     integer,intent(in)::nx ! Number of evaluation points
@@ -151,8 +158,6 @@ contains
       dEdp(mlp%iw(1,1):mlp%iw(2,1)) = reshape(matmul(p2dEdx*mlp_internal_deriv(i1:i2,:),transpose(inputs)), &
                                               (/mlp%iw(2,1)-mlp%iw(1,1)+1/))
       deallocate(p2dEdx)
-      dEdp(mlp%iw(1,mlp%nlayers):mlp%iw(2,mlp%nlayers))=0.0_k_rd
-      dEdp(mlp%ib(1,mlp%nlayers):mlp%ib(2,mlp%nlayers))=0.0_k_rd
     end if
 
     deallocate(mlp_internal,mlp_internal_deriv)
@@ -173,8 +178,8 @@ contains
     real(k_rd),intent(in),dimension(:),optional::monitor_targets
     real(k_rd),intent(inout),dimension(:),optional::best_params
     real(k_rd),intent(inout),optional::best_E
-    integer,  parameter    :: m = 10, iprint = 50
-    real(k_rd), parameter    :: factr = 1.0_k_rd,pgtol=0.0_k_rd!factr  = 1.0d+7, pgtol  = 1.0d-5
+    integer,  parameter    :: m = 5, iprint = 50
+    real(k_rd), parameter    :: factr = 0.0_k_rd,pgtol=0.0_k_rd!factr  = 1.0d+7, pgtol  = 1.0d-5
     character(len=60)      :: task, csave
     logical                :: lsave(4)
     integer                :: isave(44)
@@ -187,6 +192,7 @@ contains
     allocate ( iwa(3*mlp%nparams) )
     allocate ( wa(2*m*mlp%nparams + 5*mlp%nparams + 11*m*m + 8*m) )
     nbound = 0
+    nmon=0
 
 
 
@@ -255,59 +261,166 @@ contains
       biases(3*(i-1)+3) = log(sqrt(cluster_energy(i)/real(cluster_population(i))))
     end do
     print *, biases
-  end subroutine
+  end subroutine evaluate_initial_biases
 
+  subroutine store_mdn(file,nkernels,net)
+    character(len=*),intent(in)::file
+    integer,intent(in)::nkernels
+    type(mlp_network),intent(in)::net
+    integer::lu,i
+    open(newunit=lu,file=file,form='unformatted',status='replace')
+    write(lu) nkernels
+    write(lu) net%nlayers
+    do i=1,net%nlayers+1
+      write(lu) net%node_counts(i)
+    end do
+    do i=1,net%nlayers
+      write(lu) net%neuron_type(i)
+    end do
+    do i=1,net%nparams
+      write(lu) net%params(i)
+    end do
+    close(lu)
+  end subroutine store_mdn
+
+  subroutine load_mdn(file,nkernels,net)
+    character(len=*),intent(in)::file
+    integer,intent(out)::nkernels
+    type(mlp_network),intent(out)::net
+    type(mlp_settings)::settings
+    integer::lu,i
+    open(newunit=lu,file=file,form='unformatted',status='old')
+    read(lu) nkernels
+    read(lu) settings%nhidden
+    allocate(settings%node_counts(settings%nhidden),settings%neuron_type(settings%nhidden-1))
+    settings%nhidden = settings%nhidden-2
+
+    do i=1,settings%nhidden+2
+      read(lu)net%node_counts(i)
+    end do
+    do i=1,settings%nhidden+1
+      read(lu)net%neuron_type(i)
+    end do
+    call allocate_mlp(net,settings)
+    do i=1,net%nparams
+      read(lu) net%params(i)
+    end do
+    close(lu)
+    deallocate(settings%node_counts,settings%neuron_type)
+  end subroutine load_mdn
+
+  subroutine create_mdn_committee(committee,nmembers,settings)
+    integer,intent(in)::nmembers
+    type(mdn_committee),intent(out)::committee
+    type(mlp_settings),dimension(:),intent(in)::settings
+    integer::i
+    committee%nmembers=nmembers
+
+    allocate(committee%member(nmembers),committee%weight(nmembers),committee%nkernels(nmembers))
+    do i=1,nmembers
+      call allocate_mlp(committee%member(i),settings(i))
+      committee%nkernels(i) = committee%member(i)%node_counts(committee%member(i)%nlayers+1)/3
+    end do
+    committee%weight =0.
+  end subroutine create_mdn_committee
+
+  subroutine train_mdn_committee(committee,neg,inputs,targets,noise_std,maxit,monitor_inputs,monitor_targets)
+    type(mdn_committee),intent(inout)::committee
+    integer,intent(in)::neg
+    real(k_rd),dimension(:,:),intent(in)::inputs
+    real(k_rd),dimension(:),intent(in)::targets
+    real(k_rd),intent(in)::noise_std
+    integer,intent(in)::maxit
+    real(k_rd),dimension(:,:),intent(in)::monitor_inputs
+    real(k_rd),dimension(:),intent(in)::monitor_targets
+    real(k_rd),dimension(:),allocatable::best_params
+    real(k_rd)::best_E
+    integer::ict
+
+    do ict = 1,committee%nmembers
+      print *, "Training committee member", ict
+      best_E = 1.0e10
+      allocate(best_params(committee%member(ict)%nparams))
+      call train_mdn(committee%nkernels(ict),committee%member(ict),neg,inputs,targets,noise_std,maxit, &
+                                                      monitor_inputs,monitor_targets,best_params,best_E)
+      committee%member(ict)%params = best_params
+      deallocate(best_params)
+      committee%weight(ict) = exp(-best_E/real(size(monitor_inputs,2)))
+    end do
+    committee%weight = committee%weight/sum(committee%weight)
+  end subroutine train_mdn_committee
+
+  subroutine evaluate_mdn_committee(committee,neg,inputs,nx,x,p)
+    type(mdn_committee),intent(in)::committee
+    integer,intent(in)::neg
+    real(k_rd),dimension(:,:),intent(in)::inputs !inputs(:,neg)
+    integer,intent(in)::nx
+    real(k_rd),dimension(:),intent(in)::x !x(nx)
+    real(k_rd),dimension(:,:),intent(out)::p !p(nx,neg)
+    real(k_rd),dimension(:,:),allocatable::myp
+    integer::ict
+
+    p=0.
+    allocate(myp(nx,neg))
+    do ict=1,committee%nmembers
+      call evaluate_mdn(committee%nkernels(ict),committee%member(ict),neg,inputs,nx,x,myp)
+      p = p + committee%weight(ict)*myp
+    end do
+    deallocate(myp)
+  end subroutine
 
   !From GCC website
   subroutine init_random_seed()
-            use iso_fortran_env, only: int64
-            implicit none
-            integer, allocatable :: seed(:)
-            integer :: i, n, un, istat, dt(8), pid
-            integer(int64) :: t
+    use iso_fortran_env, only: int64
+    implicit none
+    integer, allocatable :: seed(:)
+    integer :: i, n, un, istat, dt(8), pid
+    integer(int64) :: t
 
-            call random_seed(size = n)
-            allocate(seed(n))
-            ! First try if the OS provides a random number generator
-            open(newunit=un, file="/dev/urandom", access="stream", &
-                 form="unformatted", action="read", status="old", iostat=istat)
-            if (istat == 0) then
-               read(un) seed
-               close(un)
-            else
-               ! Fallback to XOR:ing the current time and pid. The PID is
-               ! useful in case one launches multiple instances of the same
-               ! program in parallel.
-               call system_clock(t)
-               if (t == 0) then
-                  call date_and_time(values=dt)
-                  t = (dt(1) - 1970) * 365_int64 * 24 * 60 * 60 * 1000 &
-                       + dt(2) * 31_int64 * 24 * 60 * 60 * 1000 &
-                       + dt(3) * 24_int64 * 60 * 60 * 1000 &
-                       + dt(5) * 60 * 60 * 1000 &
-                       + dt(6) * 60 * 1000 + dt(7) * 1000 &
-                       + dt(8)
-               end if
-               pid = getpid()
-               t = ieor(t, int(pid, kind(t)))
-               do i = 1, n
-                  seed(i) = lcg(t)
-               end do
-            end if
-            call random_seed(put=seed)
-          contains
-            ! This simple PRNG might not be good enough for real work, but is
-            ! sufficient for seeding a better PRNG.
-            function lcg(s)
-              integer :: lcg
-              integer(int64) :: s
-              if (s == 0) then
-                 s = 104729
-              else
-                 s = mod(s, 4294967296_int64)
-              end if
-              s = mod(s * 279470273_int64, 4294967291_int64)
-              lcg = int(mod(s, int(huge(0), int64)), kind(0))
-            end function lcg
-          end subroutine init_random_seed
+    call random_seed(size = n)
+    allocate(seed(n))
+    ! First try if the OS provides a random number generator
+    open(newunit=un, file="/dev/urandom", access="stream", &
+         form="unformatted", action="read", status="old", iostat=istat)
+    if (istat == 0) then
+       read(un) seed
+       close(un)
+    else
+       ! Fallback to XOR:ing the current time and pid. The PID is
+       ! useful in case one launches multiple instances of the same
+       ! program in parallel.
+       call system_clock(t)
+       if (t == 0) then
+          call date_and_time(values=dt)
+          t = (dt(1) - 1970) * 365_int64 * 24 * 60 * 60 * 1000 &
+               + dt(2) * 31_int64 * 24 * 60 * 60 * 1000 &
+               + dt(3) * 24_int64 * 60 * 60 * 1000 &
+               + dt(5) * 60 * 60 * 1000 &
+               + dt(6) * 60 * 1000 + dt(7) * 1000 &
+               + dt(8)
+       end if
+       pid = getpid()
+       t = ieor(t, int(pid, kind(t)))
+       do i = 1, n
+          seed(i) = lcg(t)
+       end do
+    end if
+    print *, "Seed:",seed
+    call random_seed(put=seed)
+    call zigset(seed(1))
+  contains
+    ! This simple PRNG might not be good enough for real work, but is
+    ! sufficient for seeding a better PRNG.
+    function lcg(s)
+      integer :: lcg
+      integer(int64) :: s
+      if (s == 0) then
+         s = 104729
+      else
+         s = mod(s, 4294967296_int64)
+      end if
+      s = mod(s * 279470273_int64, 4294967291_int64)
+      lcg = int(mod(s, int(huge(0), int64)), kind(0))
+    end function lcg
+  end subroutine init_random_seed
 end module mdn
