@@ -20,7 +20,7 @@ program mdn_test
   real(k_rd),dimension(nveregs)::ver_tar
   real(k_rd)::Emon,mean,std,rand
   real(k_rd),dimension(:),allocatable::best_params
-  integer,parameter::nct = 50
+  integer,parameter::nct = 250
   type(mlp_settings),dimension(nct)::settings
   !type(mlp_network)::net
   type(mdn_committee)::committee
@@ -88,7 +88,7 @@ program mdn_test
 
   !call allocate_mlp(net,settings)
   do ict=1,nct
-    call evaluate_initial_biases(committee%nkernels(ict),negs,targets,biases)
+    call evaluate_initial_biases(targets,biases)
     call initialise_mlp(committee%member(ict),biases(1:3*committee%nkernels(ict)))
   end do
   !allocate(best_params(net%nparams))
@@ -96,7 +96,7 @@ program mdn_test
 
 
   !Emon = 1e99_k_rd
-  call train_mdn_committee(committee,negs,models,targets,0.00_k_rd,50,mon_mods,mon_tar)
+  call train_mdn_committee(committee,models,targets,0.00_k_rd,50,mon_mods,mon_tar)
   ! print *, Emon
   !net%params = best_params
   do i=1,nx
@@ -110,7 +110,7 @@ program mdn_test
   write(7,*) nx
   write(7,*) (mean+std*x(i),i=1,nx)
   do imon = 1,nveregs
-    call evaluate_mdn_committee(committee,1,ver_mods(:,imon:imon),nx,x,p)
+    p = evaluate_mdn_committee(committee,ver_mods(:,imon:imon),x)
     write(7,*) mean+std*ver_tar(imon),(p(i,1),i=1,nx)
   end do
 

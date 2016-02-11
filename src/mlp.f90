@@ -22,13 +22,13 @@ module mlp
     integer,dimension(:),allocatable::node_counts ! dimension nlayers+1
   end type mlp_network
 contains
-  integer function get_layer_nin(mlp,ilayer) result(nin)
+  pure integer function get_layer_nin(mlp,ilayer) result(nin)
     type(mlp_network),intent(in)::mlp
     integer,intent(in)::ilayer
     nin = mlp%node_counts(ilayer)
   end function get_layer_nin
 
-  integer function get_layer_nout(mlp,ilayer) result(nout)
+  pure integer function get_layer_nout(mlp,ilayer) result(nout)
     type(mlp_network),intent(in)::mlp
     integer,intent(in)::ilayer
     nout = mlp%node_counts(ilayer+1)
@@ -64,8 +64,9 @@ contains
 
   subroutine initialise_mlp(mlp,final_bias)
     type(mlp_network),intent(inout)::mlp
-    real(k_rd),dimension(:),optional::final_bias
+    real(k_rd),dimension(mlp%node_counts(mlp%nlayers+1)),optional::final_bias
     integer::i,j,ilayer
+    mlp%params = 0.0_k_rd
     do ilayer=1,mlp%nlayers
       do i = mlp%iw(1,ilayer), mlp%iw(2,ilayer)
         mlp%params(i) = rnor()/real(mlp%node_counts(ilayer)+1)
@@ -80,14 +81,13 @@ contains
   subroutine evaluate_mlp(mlp,inputs,outputs,internal_values,internal_derivatives)
     type(mlp_network),intent(in)::mlp
     real(k_rd),dimension(:,:),intent(in)::inputs
-    real(k_rd),dimension(:,:),intent(out)::outputs
+    real(k_rd),dimension(get_layer_nout(mlp,mlp%nlayers),size(inputs,2)),intent(out)::outputs
     real(k_rd),dimension(:,:),intent(out),optional,target::internal_values,internal_derivatives
     real(k_rd),dimension(:,:),pointer::p2internal
     integer::n_internal,ilayer, negs, iin,nin,iout,nout
 
     negs=size(inputs,2)
     if(size(inputs,1) .ne. get_layer_nin(mlp,1)) stop 'dimension error'
-    if( (size(outputs,1) .ne. get_layer_nout(mlp,mlp%nlayers)) .or. (size(outputs,2).ne.negs)) stop 'dimension error'
     n_internal = 0
     do ilayer = 1,mlp%nlayers
       n_internal = n_internal + get_layer_nout(mlp,ilayer)
@@ -156,7 +156,7 @@ contains
       iin = iin + nin
       nin = nout
     end do
-    outputs(:,:) = p2internal(iout:iout+nout-1,:)
+    outputs = p2internal(iout:iout+nout-1,:)
     if(.not.present(internal_values)) deallocate(p2internal)
   end subroutine evaluate_mlp
 

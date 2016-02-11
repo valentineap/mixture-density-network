@@ -1,7 +1,7 @@
 OBJ=../obj
 BIN=../bin
 
-FLAGS=-O3 -J ../mod -Wuninitialized -fbounds-check -g
+FLAGS=-O5 -J ../mod -Wuninitialized -fexternal-blas -funroll-loops -fopenmp
 FC=gfortran -c $(FLAGS)
 FLINK=gfortran $(FLAGS)
 
@@ -12,6 +12,7 @@ FLINK=gfortran $(FLAGS)
 all: mdn_test
 
 mdn_test: $(BIN)/mdn_test
+
 
 $(OBJ)/%.o: %.f90
 	$(FC) $+ -o $@
