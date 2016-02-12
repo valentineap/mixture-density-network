@@ -1,21 +1,87 @@
 module mdn
+  ! ------------------------
+  ! Mixture density networks
+  ! ========================
+  !     Andrew Valentine
+  !   Universiteit Utrecht
+  ! ------------------------
   use mlp
   use iso_fortran_env, only: int64
   implicit none
 
   type mdn_committee
     integer::nmembers
+    integer::ninputs
     integer,dimension(:),allocatable::nkernels
     type(mlp_network),dimension(:),allocatable::member
     real(k_rd),dimension(:),allocatable::weight
+    real(k_rd),dimension(:),allocatable::standardise_mean
+    real(k_rd),dimension(:),allocatable::standardise_std
   end type
   real(k_rd)::pi=4.0_k_rd*atan(1.0_k_rd)
 contains
+  subroutine store_mdn_committee(committee,file)
+    type(mdn_committee),intent(in)::committee
+    character(len=*),intent(in)::file
+    integer::lu,i,j
+    open(newunit=lu,form='unformatted',file=file)
+    write(lu) committee%nmembers,committee%ninputs
+    write(lu) (committee%nkernels(i),i=1,committee%nmembers)
+    do i=1,committee%nmembers
+      write(lu) committee%member(i)%nlayers
+      write(lu) (committee%member(i)%neuron_type(j),j=1,committee%member(i)%nlayers)
+      write(lu) (committee%member(i)%node_counts(j),j=1,committee%member(i)%nlayers+1)
+      write(lu) (committee%member(i)%params(j),j=1,committee%member(i)%nparams)
+    end do
+    write(lu) (committee%weight(i),i=1,committee%nmembers)
+    write(lu) (committee%standardise_mean(i),i=1,committee%ninputs+1)
+    write(lu) (committee%standardise_std(i),i=1,committee%ninputs+1)
+    close(lu)
+  end subroutine store_mdn_committee
+
+  subroutine load_mdn_committee(committee,file)
+    type(mdn_committee),intent(out)::committee
+    type(mlp_settings)::settings
+    character(len=*),intent(in)::file
+    integer::lu,i,j
+    open(newunit=lu,form='unformatted',status='old',file=file)
+    read(lu),committee%nmembers,committee%ninputs
+    allocate(committee%nkernels(committee%nmembers),committee%member(committee%nmembers),committee%weight(committee%nmembers))
+    read(lu),(committee%nkernels(i),i=1,committee%nmembers)
+    do i=1,committee%nmembers
+      read(lu) settings%nhidden
+      settings%nhidden=settings%nhidden-1
+      allocate(settings%node_counts(settings%nhidden+2),settings%neuron_type(settings%nhidden+1))
+      read(lu) (settings%neuron_type(j),j=1,settings%nhidden+1)
+      read(lu) (settings%node_counts(j),j=1,settings%nhidden+2)
+      call allocate_mlp(committee%member(i),settings)
+      read(lu) (committee%member(i)%params(j),j=1,committee%member(i)%nparams)
+      deallocate(settings%node_counts, settings%neuron_type)
+    end do
+    read(lu) (committee%weight(i),i=1,committee%nmembers)
+    allocate(committee%standardise_mean(committee%ninputs+1),committee%standardise_std(committee%ninputs+1))
+    read(lu) (committee%standardise_mean(i),i=1,committee%ninputs+1)
+    read(lu) (committee%standardise_std(i),i=1,committee%ninputs+1)
+    close(lu)
+  end subroutine load_mdn_committee
+
   elemental function gauss(x,mu,sigma) result(g)
     real(k_rd),intent(in)::x,mu,sigma
     real(k_rd)::g
     g = exp((-(x-mu)**2.0_k_rd)/(2.0_k_rd*sigma**2.0_k_rd))/(sigma*(2.0_k_rd*pi)**0.5_k_rd)
   end function gauss
+
+  elemental function standardise(x,mu,sigma) result(s)
+    real(k_rd),intent(in)::x,mu,sigma
+    real(k_rd)::s
+    s=(x-mu)/sigma
+  end function standardise
+
+  elemental function unstandardise(s,mu,sigma) result(x)
+    real(k_rd),intent(in)::s,mu,sigma
+    real(k_rd)::x
+    x = sigma*s + mu
+  end function unstandardise
 
   function evaluate_gmm(x,weights,means,stds) result(p)
     real(k_rd),dimension(:),intent(in)::x
@@ -276,19 +342,74 @@ contains
     deallocate(settings%node_counts,settings%neuron_type)
   end subroutine load_mdn
 
-  subroutine create_mdn_committee(committee,nmembers,settings)
-    integer,intent(in)::nmembers
+  subroutine load_dataset(file,inputs,targets)
+    character(len=*),intent(in)::file
+    real(k_rd),dimension(:,:),allocatable,intent(out)::inputs
+    real(k_rd),dimension(:),allocatable,intent(out),optional::targets
+    integer::lu,nrecs,ninputs,nfields,irec,ichar
+    integer, parameter::BUFSIZE=1024
+    character(len=BUFSIZE)::buffer
+    print *, "Reading dataset from file:", file
+    open(newunit=lu,file=file,status='old')
+    nrecs=0
+    nfields=0
+    do
+      read(lu,"(1024a)",end=101) buffer
+      nrecs = nrecs+1
+      if(nrecs.eq.1) then
+        ichar = 1
+        countfields:do
+          do while(buffer(ichar:ichar).eq.' ')
+            ichar = ichar+1
+            if(ichar.gt.BUFSIZE) exit countfields
+          end do
+          nfields=nfields+1
+          do while(buffer(ichar:ichar).ne.' ')
+            ichar=ichar+1
+            if(ichar.gt.BUFSIZE) then
+              print *,
+              print *, "!!! WARNING: possible buffer overflow encountered !!!"
+              print *,
+              exit countfields
+            end if
+          end do
+        end do countfields
+      end if
+    end do
+101 continue
+    print *, "File contains",nrecs,"records, each with", nfields-1,"inputs and 1 target"
+    if(present(targets)) then
+      allocate(inputs(nfields-1,nrecs),targets(nrecs))
+    else
+      allocate(inputs(nfields,nrecs))
+    end if
+    rewind(lu)
+    do irec = 1,nrecs
+      if(present(targets)) then
+        read(lu,*)inputs(:,irec),targets(irec)
+      else
+        read(lu,*)inputs(:,irec)
+      end if
+    end do
+    print *,
+    close(lu)
+  end subroutine load_dataset
+
+  subroutine create_mdn_committee(committee,nmembers,ninputs,settings)
+    integer,intent(in)::nmembers,ninputs
     type(mdn_committee),intent(out)::committee
     type(mlp_settings),dimension(:),intent(in)::settings
     integer::i
     committee%nmembers=nmembers
+    committee%ninputs=ninputs
 
-    allocate(committee%member(nmembers),committee%weight(nmembers),committee%nkernels(nmembers))
+    allocate(committee%member(nmembers),committee%weight(nmembers),committee%nkernels(nmembers), &
+              committee%standardise_mean(ninputs+1),committee%standardise_std(ninputs+1))
     do i=1,nmembers
       call allocate_mlp(committee%member(i),settings(i))
       committee%nkernels(i) = committee%member(i)%node_counts(committee%member(i)%nlayers+1)/3
     end do
-    committee%weight =0.
+    committee%weight =0.0_k_rd
   end subroutine create_mdn_committee
 
   subroutine train_mdn_committee(committee,inputs,targets,noise_std,maxit,monitor_inputs,monitor_targets)
@@ -303,7 +424,7 @@ contains
     real(k_rd)::best_E
     integer::ict
     print *, "Training",committee%nmembers,"committee members..."
-!$OMP PARALLEL DO private(best_E,best_params)
+    !$OMP PARALLEL DO private(best_E,best_params) schedule(dynamic)
     do ict = 1,committee%nmembers
       print *, ict
       best_E = 1.0e10
@@ -314,7 +435,7 @@ contains
       deallocate(best_params)
       committee%weight(ict) = exp(-best_E/real(size(monitor_inputs,2)))
     end do
-!$OMP END PARALLEL DO
+    !$OMP END PARALLEL DO
     committee%weight = committee%weight/sum(committee%weight)
     print *, "...done!"
   end subroutine train_mdn_committee
@@ -332,6 +453,30 @@ contains
       p = p + committee%weight(ict)*evaluate_mdn(committee%member(ict),inputs,x)
     end do
   end function evaluate_mdn_committee
+
+  subroutine evaluate_mdn_committee_to_kernel_parameters(committee,inputs,weights,means,stds)
+    type(mdn_committee),intent(in)::committee
+    real(k_rd),dimension(:,:),intent(in)::inputs
+    real(k_rd),dimension(:,:),intent(out),allocatable::means,stds,weights
+    real(k_rd),dimension(:,:),allocatable::netouts
+    integer::nkp,ict,inext,nk,ieg
+    nkp = sum(committee%nkernels)
+    allocate(means(nkp,size(inputs,2)),stds(nkp,size(inputs,2)),weights(nkp,size(inputs,2)))
+    inext=1
+    do ict=1,committee%nmembers
+      nk = committee%nkernels(ict)
+      allocate(netouts(3*nk,size(inputs,2)))
+      call evaluate_mlp(committee%member(ict),inputs,netouts)
+      weights(inext:inext+nk,:) = exp(netouts(1:3*nk-2:3,:))
+      do ieg=1,size(inputs,2)
+        weights(inext:inext+nk,ieg) = weights(inext:inext+nk,ieg)*committee%weight(ict)/sum(exp(netouts(1:3*nk-2:3,ieg)))
+      end do
+      means(inext:inext+nk,:)=netouts(2:3*nk-1:3,:)
+      stds(inext:inext+nk,:)=exp(netouts(3:3*nk:3,:))
+      inext=inext+nk
+      deallocate(netouts)
+    end do
+  end subroutine
 
   !From GCC website
   subroutine init_random_seed()
@@ -368,7 +513,6 @@ contains
           seed(i) = lcg(t)
        end do
     end if
-    print *, "Seed:",seed
     call random_seed(put=seed)
     call zigset(seed(1))
   end subroutine init_random_seed

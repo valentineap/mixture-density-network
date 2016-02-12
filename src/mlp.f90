@@ -1,4 +1,10 @@
 module mlp
+  ! ----------------------
+  ! Multi-layer perceptron
+  ! ======================
+  !    Andrew Valentine
+  !  Universiteit Utrecht
+  ! ----------------------
   use ziggurat
   implicit none
 

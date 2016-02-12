@@ -57,7 +57,7 @@ program mdn_test
     mon_mods(i,:) = (tmp2(:,i)-mean)/std
     ver_mods(i,:) = (tmp3(:,i)-mean)/std
   end do
-  tpar = 12
+  tpar = 9
   mean = sum((tmp(:,28+tpar)))/real(negs,k_rd)
   std = sqrt(sum(((tmp(:,28+tpar))-mean)**2.)/real(negs-1,k_rd))
   targets = ((tmp(:,28+tpar))-mean)/std
