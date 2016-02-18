@@ -5,6 +5,7 @@ a.p.valentine@uu.nl
 ***
 
 This package implements the Mixture Density Network (MDN) of Bishop (1995). Implementation choices are inspired by (but not identical to) those described in Kaufl (2015) and Kaufl et al. (2016). Specifically, the package currently includes:
+
 * 'Committees' of independent MDNs, with
 * Randomised network sizes (numbers of Gaussian kernels and hidden units);
 * Network training via the L-BFGS algorithm;
