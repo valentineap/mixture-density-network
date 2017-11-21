@@ -347,7 +347,7 @@ contains
     real(k_rd),dimension(:,:),allocatable,intent(out)::inputs
     real(k_rd),dimension(:),allocatable,intent(out),optional::targets
     integer::lu,nrecs,ninputs,nfields,irec,ichar
-    integer, parameter::BUFSIZE=1024
+    integer, parameter::BUFSIZE=4096
     character(len=BUFSIZE)::buffer
     print *, "Reading dataset from file:", file
     open(newunit=lu,file=file,status='old')
